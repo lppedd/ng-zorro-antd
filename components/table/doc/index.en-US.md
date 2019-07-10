@@ -67,7 +67,7 @@ The data passed to `[nzData]` will be export with [Template Context](https://ang
 
 | Property | Description | Type | Default |
 | -------- | ----------- | ---- | ------- |
-| `[nzData]` | Data record array to be displayed | `any[]` | - |
+| `[nzData]` | Data record array to be displayed, or a CDK `DataSource` instance (only if `nzVirtualScroll = true`) | `any[]` - `DataSource` | - |
 | `[nzFrontPagination]` | Whether paginate data in front side，should set to `false` if you want to paginate data in server side or display all data in table | `boolean` | `true` |
 | `[nzTotal]` | Total data count, should set when `nzServerRender` is true | `number` | - |
 | `[nzPageIndex]` | pageIndex , double binding | `number` | - |
