@@ -6,6 +6,7 @@
 @table-header-sort-active-bg: darken(@table-header-bg, 3%);
 @table-header-filter-active-bg: darken(@table-header-sort-active-bg, 5%);
 @table-selection-column-width: 60px;
+@table-skeleton-to-color: shade(@skeleton-color, 5%);
 
 .@{table-prefix-cls}-wrapper {
   .clearfix;
@@ -231,17 +232,22 @@
         background: @table-row-hover-bg;
       }
     }
-    &.@{table-prefix-cls}-row-selected > td {
-      &.@{table-prefix-cls}-column-sort {
-        background: @table-body-selected-sort-bg;
+
+    &.v-loading {
+      div:before {
+        content: '.';
+        visibility: hidden;
       }
-    }
-    &:hover {
-      &.@{table-prefix-cls}-row-selected > td {
-        background: @table-selected-row-hover-bg;
-        &.@{table-prefix-cls}-column-sort {
-          background: @table-body-selected-sort-bg;
-        }
+
+      div {
+        animation: 1.4s infinite ant-skeleton-loading;
+        background: linear-gradient(
+          90deg,
+          @skeleton-color 25%,
+          @table-skeleton-to-color 37%,
+          @skeleton-color 63%
+        );
+        background-size: 400% 100%;
       }
     }
   }

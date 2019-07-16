@@ -22,8 +22,8 @@ export interface VirtualDataInterface {
       [nzVirtualItemSize]="54"
       [nzData]="listOfData"
       [nzVirtualForTrackBy]="trackByIndex"
-      [nzFrontPagination]="false"
-      [nzShowPagination]="false"
+      [nzFrontPagination]="true"
+      [nzShowPagination]="true"
       [nzScroll]="{ x: '1300px', y: '240px' }"
     >
       <thead>

@@ -6,7 +6,7 @@ import { NzI18nService } from '../i18n/nz-i18n.service';
 import { NzTableComponent } from './nz-table.component';
 import { NzTableModule } from './nz-table.module';
 
-describe('nz-table', () => {
+fdescribe('nz-table', () => {
   let injector: Injector;
 
   beforeEach(async(() => {
@@ -121,15 +121,17 @@ describe('nz-table', () => {
       fixture.detectChanges();
       expect(table.nativeElement.querySelector('.ant-pagination-simple')).toBeDefined();
     });
-    it('should pagination work', () => {
+    fit('should pagination work', fakeAsync(() => {
       fixture.detectChanges();
+      tick();
       expect(table.nativeElement.querySelector('.ant-pagination')).toBeDefined();
       expect(table.nativeElement.querySelectorAll('.ant-table-tbody tr').length).toBe(10);
       testComponent.pagination = false;
       fixture.detectChanges();
+      tick();
       expect(table.nativeElement.querySelector('.ant-pagination')).toBeNull();
       expect(table.nativeElement.querySelectorAll('.ant-table-tbody tr').length).toBe(20);
-    });
+    }));
     it('should bordered work', () => {
       fixture.detectChanges();
       expect(table.nativeElement.querySelector('.ant-table').classList).not.toContain('ant-table-bordered');

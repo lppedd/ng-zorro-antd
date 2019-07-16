@@ -3,7 +3,7 @@ import { DataSource } from '@angular/cdk/table';
 import { HttpClient } from '@angular/common/http';
 import { Component, ViewChild } from '@angular/core';
 import { NzTableComponent } from 'ng-zorro-antd';
-import { BehaviorSubject, Observable, Subscription } from 'rxjs';
+import { BehaviorSubject, Observable, of, Subscription } from 'rxjs';
 import { delay } from 'rxjs/operators';
 
 @Component({
@@ -61,6 +61,8 @@ class TableDataSource extends DataSource<User> {
   private readonly fetchedPages = new Set<number>();
   private readonly dataStream = new BehaviorSubject<User[]>(this.cachedData);
   private readonly subscription = new Subscription();
+
+  length$ = of(1);
 
   constructor(private readonly http: HttpClient) {
     super();
