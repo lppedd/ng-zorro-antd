@@ -58,7 +58,7 @@
             for new records on the fly.
           -->
           <ng-container
-            *cdkVirtualFor="let item of data; let i = index; trackBy: nzVirtualForTrackBy;"
+            *cdkVirtualFor="let item of tableManager.data; let i = index; trackBy: nzVirtualForTrackBy;"
           >
             <ng-template
               [ngTemplateOutlet]="item ? nzVirtualScrollDirective?.templateRef : loading"
@@ -70,7 +70,7 @@
     </cdk-virtual-scroll-viewport>
   </ng-template>
 
-  <div class="ant-table-placeholder" *ngIf="data.length === 0 && !nzLoading && !nzTemplateMode">
+  <div class="ant-table-placeholder" *ngIf="nzTotal === 0 && !nzLoading && !nzTemplateMode">
     <nz-embed-empty [nzComponentName]="'table'" [specificContent]="nzNoResult"></nz-embed-empty>
   </div>
   <div class="ant-table-footer" *ngIf="nzFooter">
@@ -90,7 +90,7 @@
 </ng-template>
 
 <ng-template #paginationTemplate>
-  <nz-pagination *ngIf="nzShowPagination && data.length"
+  <nz-pagination *ngIf="nzShowPagination && nzTotal > 0"
     [nzInTable]="true"
     [nzShowSizeChanger]="nzShowSizeChanger"
     [nzPageSizeOptions]="nzPageSizeOptions"

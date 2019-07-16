@@ -37,7 +37,7 @@ import {
 import { measureScrollbar, InputBoolean, InputNumber, NzSizeMDSType } from 'ng-zorro-antd/core';
 import { NzI18nService } from 'ng-zorro-antd/i18n';
 import { fromEvent, merge, of, BehaviorSubject, EMPTY, Observable, Subject, Subscription } from 'rxjs';
-import { flatMap, map, shareReplay, startWith, takeUntil, tap } from 'rxjs/operators';
+import { first, flatMap, shareReplay, startWith, takeUntil } from 'rxjs/operators';
 
 import { NzThComponent } from './nz-th.component';
 import { NzTheadComponent } from './nz-thead.component';
@@ -51,7 +51,7 @@ import { NzVirtualScrollDirective } from './nz-virtual-scroll.directive';
   encapsulation: ViewEncapsulation.None,
   templateUrl: './nz-table.component.html',
   host: {
-    '[class.ant-table-empty]': 'data.length === 0'
+    '[class.ant-table-empty]': 'nzTotal === 0'
   },
   styles: [
     `
@@ -66,21 +66,10 @@ import { NzVirtualScrollDirective } from './nz-virtual-scroll.directive';
   ]
 })
 // tslint:disable-next-line no-any
-export class NzTableComponent<T = any>
-  implements OnInit, AfterViewInit, OnDestroy, OnChanges, AfterContentInit, CollectionViewer {
-  /**
-   * This Subject will be used to interact with the {@link data} DataSource
-   * in case front-end pagination is enabled.
-   */
-  viewChange = new Subject<ListRange>();
-
-  /**
-   * Table data can be inputted as a simple array, or a DataSource.
-   * In case it is inputted as array, we'll wrap it in a custom
-   * {@link NzDataSource}, which will give as the ability to display
-   * all data, and to paginate correctly if front-end pagination is enabled.
-   */
-  data: NzDataSource<T> = NzEmptyDataSource.INSTANCE;
+export class NzTableComponent<T = any> implements OnInit, AfterViewInit, OnDestroy, OnChanges, AfterContentInit {
+  data: readonly T[] = [];
+  dataSource: NzDataSource<T> = new NzEmptyDataSource<T>();
+  tableManager: NzTableManager<T> = new NzEmptyTableManager<T>();
 
   locale: any = {}; // tslint:disable-line:no-any
   nzTheadComponent: NzTheadComponent;
@@ -227,25 +216,31 @@ export class NzTableComponent<T = any>
   }
 
   updateFrontPaginationDataIfNeeded(isPageSizeOrDataChange: boolean = false): void {
-    if (this.nzFrontPagination) {
-      const total = this.data.length;
+    if (!this.nzFrontPagination) {
+      this.tableManager.displayAll();
+    }
+
+    const update = (total: number) => {
       this.nzTotal = total;
 
-      if (isPageSizeOrDataChange) {
-        const maxPageIndex = Math.ceil(total / this.nzPageSize) || 1;
-        const pageIndex = this.nzPageIndex > maxPageIndex ? maxPageIndex : this.nzPageIndex;
-        if (pageIndex !== this.nzPageIndex) {
-          this.nzPageIndex = pageIndex;
-          Promise.resolve().then(() => this.nzPageIndexChange.emit(pageIndex));
+      if (this.nzFrontPagination) {
+        if (isPageSizeOrDataChange) {
+          const maxPageIndex = Math.ceil(this.nzTotal / this.nzPageSize) || 1;
+          const pageIndex = this.nzPageIndex > maxPageIndex ? maxPageIndex : this.nzPageIndex;
+          if (pageIndex !== this.nzPageIndex) {
+            this.nzPageIndex = pageIndex;
+            Promise.resolve().then(() => this.nzPageIndexChange.emit(pageIndex));
+          }
         }
-      }
 
-      // Notify the DataSource we need to display a specific range of records
-      this.viewChange.next({
-        start: (this.nzPageIndex - 1) * this.nzPageSize,
-        end: this.nzPageIndex * this.nzPageSize
-      });
-    }
+        this.tableManager.paginate({
+          start: (this.nzPageIndex - 1) * this.nzPageSize,
+          end: this.nzPageIndex * this.nzPageSize
+        });
+      }
+    };
+
+    this.tableManager.length$.pipe(first()).subscribe({ next: update });
   }
 
   constructor(
@@ -330,128 +325,119 @@ export class NzTableComponent<T = any>
     this.destroy$.complete();
   }
 
-  private handleDataChange(nzData: NzDataSource<T> | T[]): void {
-    const frontPagination = this.nzShowPagination && this.nzFrontPagination;
-    const displayAll = this.nzVirtualScroll && !frontPagination;
-    this.data = isDataSource(nzData) ? nzData : new NzArrayDataSource(nzData, displayAll);
+  private handleDataChange(nzData: T[] | NzDataSource<T>): void {
+    if (isDataSource(nzData)) {
+      this.tableManager = new NzDataSourceTableManager<T>(this, nzData);
+    } else {
+      this.tableManager = new NzArrayTableManager<T>(this, nzData);
+    }
+  }
+}
 
-    if (frontPagination) {
-      this.data = new NzDetachedDataSource(this, this.data);
-      this.data.connect(this).subscribe({
-        next: data => this.nzCurrentPageDataChange.emit(data as T[])
+export abstract class NzDataSource<T> extends DataSource<T> {
+  abstract length$: Observable<number>;
+}
+
+interface NzTableManager<T> {
+  data: readonly T[] | DataSource<T>;
+  length$: Observable<number>;
+
+  displayAll(): void;
+  paginate(range: ListRange): void;
+}
+
+class NzArrayTableManager<T> implements NzTableManager<T> {
+  data: readonly T[];
+  readonly length$ = of(this.userData.length).pipe(shareReplay(1));
+
+  constructor(
+    private readonly table: NzTableComponent<T>, //
+    private readonly userData: readonly T[]
+  ) {
+    this.data = this.userData;
+    this.table.data = this.userData;
+  }
+
+  displayAll(): void {
+    this.data = this.userData;
+    this.table.data = this.userData;
+  }
+
+  paginate(range: ListRange): void {
+    this.data = this.userData.slice(range.start, range.end);
+    this.table.data = this.data;
+    this.table.nzCurrentPageDataChange.emit(this.data as T[]);
+  }
+}
+
+class NzDataSourceTableManager<T> implements NzTableManager<T>, CollectionViewer {
+  readonly data: NzDataSource<T>;
+  readonly length$: Observable<number>;
+  readonly viewChange = new Subject<ListRange>();
+
+  constructor(
+    private readonly table: NzTableComponent<T>, //
+    dataSource: NzDataSource<T>
+  ) {
+    if (table.nzShowPagination && table.nzFrontPagination) {
+      // tslint:disable-next-line:no-parameter-reassignment
+      dataSource = new NzDetachedDataSource(this, dataSource);
+      dataSource.connect(this).subscribe({
+        next: data => table.nzCurrentPageDataChange.emit(data as T[])
       });
     }
+
+    this.data = dataSource;
+    this.table.dataSource = dataSource;
+    this.length$ = dataSource.length$.pipe(shareReplay(1));
+  }
+
+  displayAll(): void {}
+
+  paginate(range: ListRange): void {
+    this.viewChange.next(range);
   }
 }
 
-export abstract class NzDataSource<T> extends DataSource<T> implements Iterable<T> {
-  /**
-   * The length of the data represented by this DataSource.
-   */
-  abstract get length(): number;
+class NzEmptyTableManager<T> implements NzTableManager<T> {
+  data = [];
+  length$ = of(0);
 
-  [Symbol.iterator](): Iterator<T> {
-    throw new Error('Iterator must be implemented');
-  }
+  paginate(): void {}
+  displayAll(): void {}
 }
 
-/**
- * This DataSource manages a simple array.
- * It also offers pagination capabilities via a {@link CollectionViewer}.
- */
-class NzArrayDataSource<T> extends NzDataSource<T> {
-  /**
-   * Holds the temporary state of the data array when pagination is enabled.
-   */
-  private paginatedData: ReadonlyArray<T> = [...this.data];
-
-  /**
-   * @param data The original data array coming from the user
-   * @param displayAll If `true`, emits the entire array at once without reacting to range/view events
-   */
-  constructor(private readonly data: ReadonlyArray<T>, private readonly displayAll: boolean = false) {
-    super();
-  }
-
-  get length(): number {
-    return this.data.length;
-  }
-
-  connect(collectionViewer: CollectionViewer): Observable<ReadonlyArray<T>> {
-    if (this.displayAll) {
-      return of(this.data);
-    }
-
-    return collectionViewer.viewChange.pipe(
-      map(({ start, end }) => this.data.slice(start, end)),
-      tap(data => (this.paginatedData = data))
-    );
-  }
-
-  disconnect(): void {}
-
-  [Symbol.iterator](): Iterator<T> {
-    return this.paginatedData.values();
-  }
-}
-
-/**
- * This DataSource answer data requests coming only from the table Component.
- * Any other connected {@link CollectionViewer} is ignored.
- */
 class NzDetachedDataSource<T> extends NzDataSource<T> {
-  private readonly source$ = new BehaviorSubject<ReadonlyArray<T>>([]);
+  readonly length$ = this.dataSource.length$;
+
+  private readonly source$ = new BehaviorSubject<readonly T[]>([]);
   private readonly data$ = this.source$.asObservable().pipe(shareReplay(1));
   private readonly subscription = new Subscription();
 
-  constructor(table: NzTableComponent, readonly dataSource: NzDataSource<T>) {
+  constructor(tableManager: NzDataSourceTableManager<T>, readonly dataSource: NzDataSource<T>) {
     super();
     this.subscription.add(
-      this.dataSource.connect(table).subscribe({
+      this.dataSource.connect(tableManager).subscribe({
         next: data => this.source$.next(data)
       })
     );
   }
 
-  get length(): number {
-    return this.dataSource.length;
-  }
-
-  connect(): Observable<ReadonlyArray<T>> {
+  connect(): Observable<readonly T[]> {
     return this.data$;
   }
 
   disconnect(): void {
     this.subscription.unsubscribe();
   }
-
-  [Symbol.iterator](): Iterator<T> {
-    return this.dataSource[Symbol.iterator]();
-  }
 }
 
 class NzEmptyDataSource<T> extends NzDataSource<T> {
-  // tslint:disable-next-line:no-any
-  static readonly INSTANCE = new NzEmptyDataSource<any>();
+  readonly length$ = of(0).pipe(shareReplay(1));
 
-  private readonly emptyData$: Observable<ReadonlyArray<T>> = of([]).pipe(shareReplay(1));
-  private readonly emptyIterator: Iterator<T> = {
-    next(): IteratorResult<T> {
-      return { done: true, value: undefined! };
-    }
-  };
-
-  get length(): number {
-    return 0;
-  }
-
-  connect(): Observable<ReadonlyArray<T>> {
-    return this.emptyData$;
+  connect(): Observable<readonly T[]> {
+    return of([]).pipe(shareReplay(1));
   }
 
   disconnect(): void {}
-
-  [Symbol.iterator](): Iterator<T> {
-    return this.emptyIterator;
-  }
 }
