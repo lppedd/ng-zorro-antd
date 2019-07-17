@@ -36,7 +36,7 @@ import {
 
 import { measureScrollbar, InputBoolean, InputNumber, NzSizeMDSType } from 'ng-zorro-antd/core';
 import { NzI18nService } from 'ng-zorro-antd/i18n';
-import { fromEvent, merge, of, BehaviorSubject, EMPTY, Observable, ReplaySubject, Subject, Subscription } from 'rxjs';
+import { fromEvent, merge, BehaviorSubject, EMPTY, Observable, Subject, Subscription } from 'rxjs';
 import { flatMap, shareReplay, startWith, takeUntil } from 'rxjs/operators';
 
 import { NzThComponent } from './nz-th.component';
@@ -68,7 +68,7 @@ import { NzVirtualScrollDirective } from './nz-virtual-scroll.directive';
 // tslint:disable-next-line no-any
 export class NzTableComponent<T = any> implements OnInit, AfterViewInit, OnDestroy, OnChanges, AfterContentInit {
   data: T[] = [];
-  dataManager: NzDataManager<T> = new NzEmptyManager<T>();
+  dataManager = new DelegatingDataManager<T>(this);
 
   locale: any = {}; // tslint:disable-line:no-any
   nzTheadComponent: NzTheadComponent;
@@ -76,8 +76,6 @@ export class NzTableComponent<T = any> implements OnInit, AfterViewInit, OnDestr
   headerBottomStyle = {};
 
   private readonly destroy$ = new Subject<void>();
-  private readonly arrayManager = this.setupArrayManager();
-  private readonly dataSourceManager = new NzDataSourceManager<T>(this);
 
   @ContentChildren(NzThComponent, { descendants: true }) listOfNzThComponent: QueryList<NzThComponent>;
   @ViewChild('tableHeaderElement', { static: false, read: ElementRef }) tableHeaderElement: ElementRef;
@@ -104,7 +102,7 @@ export class NzTableComponent<T = any> implements OnInit, AfterViewInit, OnDestr
   @Input() nzWidthConfig: string[] = [];
   @Input() nzPageIndex = 1;
   @Input() nzPageSize = 10;
-  @Input() nzData: T[] | NzDataSource<T> = [];
+  @Input() nzData: NzData<T> = [];
   @Input() nzPaginationPosition: 'top' | 'bottom' | 'both' = 'bottom';
   @Input() nzScroll: { x?: string | null; y?: string | null } = { x: null, y: null };
   @Input() @ViewChild('renderItemTemplate', { static: true }) nzItemRender: TemplateRef<{
@@ -220,30 +218,18 @@ export class NzTableComponent<T = any> implements OnInit, AfterViewInit, OnDestr
 
   updateFrontPaginationDataIfNeeded(isPageSizeOrDataChange: boolean = false): void {
     if (!this.nzFrontPagination) {
-      this.dataManager.displayAll();
+      this.dataManager.noPagination();
+      return;
     }
 
-    const update = (total: number) => {
-      this.nzTotal = total;
+    if (isPageSizeOrDataChange) {
+      this.dataManager.updateTableStructure();
+    }
 
-      if (this.nzFrontPagination) {
-        if (isPageSizeOrDataChange) {
-          const maxPageIndex = Math.ceil(this.nzTotal / this.nzPageSize) || 1;
-          const pageIndex = this.nzPageIndex > maxPageIndex ? maxPageIndex : this.nzPageIndex;
-          if (pageIndex !== this.nzPageIndex) {
-            this.nzPageIndex = pageIndex;
-            Promise.resolve().then(() => this.nzPageIndexChange.emit(pageIndex));
-          }
-        }
-
-        this.dataManager.paginate({
-          start: (this.nzPageIndex - 1) * this.nzPageSize,
-          end: this.nzPageIndex * this.nzPageSize
-        });
-      }
-    };
-
-    this.dataManager.length$.pipe().subscribe({ next: update });
+    this.dataManager.paginate({
+      start: (this.nzPageIndex - 1) * this.nzPageSize,
+      end: this.nzPageIndex * this.nzPageSize
+    });
   }
 
   constructor(
@@ -328,29 +314,8 @@ export class NzTableComponent<T = any> implements OnInit, AfterViewInit, OnDestr
     this.destroy$.complete();
   }
 
-  private handleDataChange(nzData: T[] | NzDataSource<T>): void {
-    if (isDataSource(nzData)) {
-      this.dataSourceManager.setDataSource(nzData);
-      this.dataManager = this.dataSourceManager;
-    } else {
-      this.arrayManager.setArray(nzData);
-      this.dataManager = this.arrayManager;
-    }
-  }
-
-  private setupArrayManager(): NzArrayManager<T> {
-    const tableManager = new NzArrayManager<T>();
-    tableManager.data$.pipe(takeUntil(this.destroy$)).subscribe({
-      next: data => {
-        this.data = data as T[];
-
-        if (this.nzFrontPagination) {
-          this.nzCurrentPageDataChange.emit(data as T[]);
-        }
-      }
-    });
-
-    return tableManager;
+  private handleDataChange(nzData: NzData<T>): void {
+    this.dataManager.setData(nzData);
   }
 }
 
@@ -365,11 +330,11 @@ class NzDetachedDataSource<T> extends NzDataSource<T> {
   private readonly data$ = this.source$.asObservable().pipe(shareReplay(1));
   private readonly subscription = new Subscription();
 
-  constructor(dataManager: NzDataSourceManager<T>, dataSource: NzDataSource<T>) {
+  constructor(collectionViewer: CollectionViewer, dataSource: NzDataSource<T>) {
     super();
     this.length$ = dataSource.length$;
     this.subscription.add(
-      dataSource.connect(dataManager).subscribe({
+      dataSource.connect(collectionViewer).subscribe({
         next: data => this.source$.next(data)
       })
     );
@@ -384,72 +349,111 @@ class NzDetachedDataSource<T> extends NzDataSource<T> {
   }
 }
 
-abstract class NzDataManager<T> {
-  abstract readonly data$: Observable<ReadonlyArray<T> | DataSource<T>>;
-  abstract readonly length$: Observable<number>;
+export type NzData<T> = T[] | NzDataSource<T>;
 
-  /**
-   * Ask the data-manager for all the items held.
-   */
-  displayAll(): void {}
-
-  /**
-   * Ask the data-manager for a specific subset of the items held.
-   *
-   * @param range The range to ask for
-   */
-  // @ts-ignore
-  paginate(range: ListRange): void {}
+interface DataManager {
+  updateTableStructure(): void;
+  paginate(range: ListRange): void;
+  noPagination?(): void;
 }
 
-class NzEmptyManager<T> extends NzDataManager<T> {
-  readonly data$ = of([] as ReadonlyArray<T>);
-  readonly length$ = of(0);
-}
-
-class NzArrayManager<T> extends NzDataManager<T> {
-  readonly data$ = new ReplaySubject<ReadonlyArray<T>>(1);
-  readonly length$ = new ReplaySubject<number>();
-
-  private array: ReadonlyArray<T>;
-
-  setArray(array: ReadonlyArray<T>): void {
-    this.array = array;
-    this.length$.next(array.length);
-  }
-
-  displayAll(): void {
-    this.data$.next(this.array);
-  }
-
-  paginate(range: ListRange): void {
-    this.data$.next(this.array.slice(range.start, range.end));
-  }
-}
-
-class NzDataSourceManager<T> extends NzDataManager<T> implements CollectionViewer {
-  length$: Observable<number>;
-  readonly data$ = new ReplaySubject<NzDataSource<T>>(1);
+class DelegatingDataManager<T> implements DataManager, CollectionViewer {
   readonly viewChange = new Subject<ListRange>();
+  readonly cdkData$ = new BehaviorSubject<NzData<T>>([]);
 
-  constructor(private readonly table: NzTableComponent<T>) {
-    super();
-  }
+  private delegateManager!: DataManager;
 
-  setDataSource(dataSource: NzDataSource<T>): void {
-    if (this.table.nzFrontPagination) {
-      // tslint:disable-next-line:no-parameter-reassignment
-      dataSource = new NzDetachedDataSource(this, dataSource);
-      dataSource.connect(this).subscribe({
-        next: data => this.table.nzCurrentPageDataChange.emit(data as T[])
-      });
-    }
+  constructor(private readonly table: NzTableComponent<T>) {}
 
-    this.data$.next(dataSource);
-    this.length$ = dataSource.length$.pipe(shareReplay(1));
+  setData(data: NzData<T>): void {
+    this.delegateManager = isDataSource(data)
+      ? new DataSourceManager<T>(this.table, data)
+      : new ArrayManager<T>(this.table, data);
   }
 
   paginate(range: ListRange): void {
-    this.viewChange.next(range);
+    this.delegateManager.paginate(range);
+  }
+
+  updateTableStructure(): void {
+    this.delegateManager.updateTableStructure();
+  }
+
+  noPagination(): void {
+    if (this.delegateManager.noPagination) {
+      this.delegateManager.noPagination();
+    }
+  }
+}
+
+class ArrayManager<T> implements DataManager {
+  constructor(
+    private readonly table: NzTableComponent<T>, //
+    private readonly array: T[]
+  ) {}
+
+  paginate(range: ListRange): void {
+    const data = this.array.slice(range.start, range.end);
+    this.table.data = data;
+    this.table.nzTotal = this.array.length;
+    this.table.nzCurrentPageDataChange.emit(data);
+    this.table.dataManager.cdkData$.next(data);
+  }
+
+  noPagination(): void {
+    this.table.data = this.array;
+    this.table.nzTotal = this.array.length;
+    this.table.nzCurrentPageDataChange.emit(this.array);
+    this.table.dataManager.cdkData$.next(this.array);
+  }
+
+  updateTableStructure(): void {
+    const total = this.array.length;
+    this.table.nzTotal = total;
+
+    const maxPageIndex = Math.ceil(total / this.table.nzPageSize) || 1;
+    const pageIndex = this.table.nzPageIndex > maxPageIndex ? maxPageIndex : this.table.nzPageIndex;
+
+    if (pageIndex !== this.table.nzPageIndex) {
+      this.table.nzPageIndex = pageIndex;
+      Promise.resolve().then(() => this.table.nzPageIndexChange.emit(pageIndex));
+    }
+  }
+}
+
+class DataSourceManager<T> implements DataManager {
+  private readonly manager: DelegatingDataManager<T>;
+
+  constructor(private readonly table: NzTableComponent<T>, private readonly dataSource: NzDataSource<T>) {
+    this.manager = this.table.dataManager;
+
+    if (table.nzFrontPagination) {
+      // tslint:disable-next-line:no-parameter-reassignment
+      const ds = new NzDetachedDataSource<T>(this.manager, this.dataSource);
+      ds.connect().subscribe({
+        next: v => {
+          table.data = v as T[];
+          table.nzCurrentPageDataChange.emit(v as T[]);
+        }
+      });
+
+      this.manager.cdkData$.next(ds);
+    } else {
+      this.manager.cdkData$.next(dataSource);
+    }
+  }
+
+  noPagination(): void {
+    this.manager.cdkData$.next(this.dataSource);
+    this.table.nzTotal = 1;
+  }
+
+  paginate(range: ListRange): void {
+    this.manager.viewChange.next(range);
+    this.table.nzTotal = 1;
+  }
+
+  updateTableStructure(): void {
+    this.table.nzTotal = 1;
   }
 }
