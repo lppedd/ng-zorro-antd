@@ -58,7 +58,7 @@
             for new records on the fly.
           -->
           <ng-container
-            *cdkVirtualFor="let item of (data$ | async); let i = index; trackBy: nzVirtualForTrackBy;"
+            *cdkVirtualFor="let item of dataManager.data$ | async; let i = index; trackBy: nzVirtualForTrackBy;"
           >
             <ng-template
               [ngTemplateOutlet]="item ? nzVirtualScrollDirective?.templateRef : loading"
